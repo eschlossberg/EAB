@@ -1,70 +1,91 @@
-import rasterio
-from rasterio.mask import mask
-import geopandas as gpd
 import os
 import glob
 import argparse
+import geopandas as gpd
+import xarray as xr
+import rioxarray as rxr
+from multiprocessing import Pool, cpu_count
 
-def clip_imagery(shapefile_path, imagery_sources, raw_imagery_folder, output_folder, stand_id_field, target_crs):
+def process_single_image(args_tuple):
+    img_file, stands, stand_id_field, target_crs, raster_vars, source, output_folder = args_tuple
+    filename = os.path.basename(img_file)
+    date_str, ext = os.path.splitext(filename)
+
+    try:
+        ds = xr.open_dataset(img_file, engine='h5netcdf' if ext.lower() in ['.hdf', '.h5'] else None)
+    except Exception as e:
+        print(f"[ERROR] Could not open {filename}: {e}")
+        return
+
+    missing_vars = [var for var in raster_vars if var not in ds.variables]
+    if missing_vars:
+        print(f"[SKIP] Variables {missing_vars} missing in {filename}.")
+        return
+
+    raster = ds[raster_vars].to_array(dim='band')
+
+    if not raster.rio.crs:
+        raster = raster.rio.write_crs(target_crs, inplace=True)
+
+    stands_proj = stands.to_crs(raster.rio.crs)
+
+    for idx, stand in stands_proj.iterrows():
+        stand_id = stand[stand_id_field]
+        geom = [stand.geometry]
+
+        try:
+            raster.rio.set_spatial_dims(x_dim='lon', y_dim='lat')
+            clipped = raster.rio.clip(geom, raster.rio.crs, drop=True, invert=False, all_touched=True)
+        except Exception as e:
+            print(f"[CLIP ERROR] {filename}, stand {stand_id}: {e}")
+            continue
+
+        stand_source_dir = os.path.join(output_folder, f'stand_{stand_id}', source)
+        os.makedirs(stand_source_dir, exist_ok=True)
+        output_path = os.path.join(stand_source_dir, f'{date_str}.tif')
+
+        try:
+            clipped.rio.to_raster(output_path)
+            print(f"[SAVED] {stand_id}, Source: {source}, Date: {date_str}")
+        except Exception as e:
+            print(f"[SAVE ERROR] {stand_id} ({source}): {e}")
+
+def clip_to_stands(shapefile_path, imagery_sources, raw_imagery_folder, output_folder, stand_id_field, target_crs, raster_vars, num_workers):
     stands = gpd.read_file(shapefile_path).to_crs(target_crs)
 
     for source in imagery_sources:
         imagery_path = os.path.join(raw_imagery_folder, source)
-        imagery_files = sorted(glob.glob(os.path.join(imagery_path, '*.tif')))
+        imagery_files = sorted(glob.glob(os.path.join(imagery_path, '*.*')))
+        print(f"\n[PROCESSING SOURCE] {source} with {len(imagery_files)} files.")
 
-        print(f"\nProcessing imagery source: {source}")
+        args_list = [
+            (img_file, stands, stand_id_field, target_crs, raster_vars, source, output_folder)
+            for img_file in imagery_files
+        ]
 
-        for img_file in imagery_files:
-            date_str = os.path.basename(img_file).split('.')[0]
-
-            with rasterio.open(img_file) as src:
-                stands_proj = stands.to_crs(src.crs)
-
-                for idx, stand in stands_proj.iterrows():
-                    stand_geom = [stand.geometry]
-                    stand_id = stand[stand_id_field]
-
-                    try:
-                        out_image, out_transform = mask(src, stand_geom, crop=True)
-                    except Exception as e:
-                        print(f"Stand {stand_id} skipped ({e})")
-                        continue
-
-                    out_meta = src.meta.copy()
-                    out_meta.update({
-                        "driver": "GTiff",
-                        "height": out_image.shape[1],
-                        "width": out_image.shape[2],
-                        "transform": out_transform
-                    })
-
-                    stand_source_dir = os.path.join(output_folder, f'stand_{stand_id}', source)
-                    os.makedirs(stand_source_dir, exist_ok=True)
-
-                    output_path = os.path.join(stand_source_dir, f'{date_str}.tif')
-
-                    with rasterio.open(output_path, "w", **out_meta) as dest:
-                        dest.write(out_image)
-
-                    print(f"Saved: Stand {stand_id}, Source {source}, Date {date_str}")
+        with Pool(processes=num_workers) as pool:
+            pool.map(process_single_image, args_list)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Clip imagery by stand polygons and imagery source.")
-    parser.add_argument('--shapefile', required=True, help='Path to tree stands shapefile')
-    parser.add_argument('--imagery_sources', required=True, nargs='+', help='List imagery source folder names')
-    parser.add_argument('--raw_imagery_folder', required=True, help='Path to raw imagery directory')
-    parser.add_argument('--output_folder', required=True, help='Output directory for processed imagery')
-    parser.add_argument('--stand_id_field', default='stand_id', help='Field name for stand ID in shapefile')
-    parser.add_argument('--target_crs', default='EPSG:4326', help='Target CRS for processing')
+    parser = argparse.ArgumentParser(description="Parallel clip multi-band NetCDF/HDF imagery by stands.")
+    parser.add_argument('--shapefile', required=True, help='Path to shapefile')
+    parser.add_argument('--imagery_sources', required=True, nargs='+', help='Imagery sources')
+    parser.add_argument('--raw_imagery_folder', required=True, help='Raw imagery directory')
+    parser.add_argument('--output_folder', required=True, help='Processed imagery directory')
+    parser.add_argument('--stand_id_field', default='stand_id', help='Stand ID field name')
+    parser.add_argument('--target_crs', default='EPSG:4326', help='CRS for data')
+    parser.add_argument('--raster_vars', required=True, nargs='+', help='Raster variable names (bands)')
+    parser.add_argument('--num_workers', type=int, default=cpu_count()-1, help='Number of parallel workers')
 
     args = parser.parse_args()
 
-    clip_imagery(
+    clip_to_stands(
         shapefile_path=args.shapefile,
         imagery_sources=args.imagery_sources,
         raw_imagery_folder=args.raw_imagery_folder,
         output_folder=args.output_folder,
         stand_id_field=args.stand_id_field,
-        target_crs=args.target_crs
+        target_crs=args.target_crs,
+        raster_vars=args.raster_vars,
+        num_workers=args.num_workers
     )
-
