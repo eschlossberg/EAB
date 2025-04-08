@@ -1,54 +1,87 @@
-import numpy as np
-import rasterio
+import xarray as xr
+import rioxarray as rxr
+import pandas as pd
 import glob
 import os
 import argparse
+from multiprocessing import Pool, cpu_count
 
-def build_time_series(base_dir, source, bands):
-    stands = glob.glob(os.path.join(base_dir, 'stand_*'))
+def process_single_stand(args):
+    stand, output_dir = args
+    stand_id = os.path.basename(stand)
+    sources = os.listdir(stand)
 
-    for stand in stands:
-        stand_id = os.path.basename(stand)
-        source_dir = os.path.join(stand, source)
-        
-        if not os.path.isdir(source_dir):
-            print(f"Source {source} not found for {stand_id}. Skipping.")
+    dataarrays = []
+
+    for source in sources:
+        if source == "MODIS_MCD43A4":
             continue
-
+        source_dir = os.path.join(stand, source)
         tifs = sorted(glob.glob(os.path.join(source_dir, '*.tif')))
 
         if not tifs:
-            print(f"No imagery found for {stand_id} from source {source}. Skipping.")
+            print(f"No imagery for {stand_id}, source {source}. Skipping.")
             continue
-
-        stack_list = []
-
         for tif in tifs:
-            with rasterio.open(tif) as src:
-                img = src.read(bands)  # bands is a list
-                stack_list.append(img)
+            basename = os.path.basename(tif).replace('.tif', '')
+            try:
+                source_name, date_part = basename.split('_')
+                date_str = pd.to_datetime(date_part, format='%Y%m%d')
+            except Exception as e:
+                print(f"[{stand_id}] Filename format error ({basename}): {e}")
+                continue
 
-        # Convert to NumPy array with shape (time, bands, rows, cols)
-        time_series = np.stack(stack_list, axis=0)
+            try:
+                da = rxr.open_rasterio(tif, masked=True)
+            except Exception as e:
+                print(f"[{stand_id}] Error reading {tif}: {e}")
+                continue
 
-        # Save array
-        bands_str = '_'.join([str(b) for b in bands])
-        npy_path = os.path.join(source_dir, f'{source}_bands_{bands_str}_timeseries.npy')
-        np.save(npy_path, time_series)
+            if da.sizes['band'] == 1:
+                da = da.squeeze('band')
+            else:
+                da = da.rename({'band': 'bands'})
 
-        print(f"Saved time series: {stand_id} ({source}), bands: {bands_str}")
+            da = da.expand_dims({'date': [date_str], 'source': [source]})
+
+            dataarrays.append(da)
+
+    if not dataarrays:
+        print(f"No valid imagery found for {stand_id}.")
+        return
+    combined = xr.concat(dataarrays, dim='date')
+    dataset = combined.to_dataset(name='Reflectance')
+    dataset.set_coords(['date', 'source'])
+
+    dataset.attrs['stand_id'] = stand_id
+    print(dataset)
+
+    output_path = os.path.join(output_dir, f'{stand_id}_timeseries.nc')
+    try:
+        dataset.to_netcdf(output_path)
+        print(f"[{stand_id}] Saved combined dataset.")
+    except Exception as e:
+        print(f"[{stand_id}] Error saving dataset: {e}")
+
+def build_stand_xarray_parallel(base_dir, output_dir, num_workers):
+    stands = glob.glob(os.path.join(base_dir, 'stand_*'))
+    os.makedirs(output_dir, exist_ok=True)
+
+    args_list = [(stand, output_dir) for stand in stands]
+
+    with Pool(processes=num_workers) as pool:
+        pool.map(process_single_stand, args_list)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Build NumPy time series arrays for specified imagery source and bands.")
+    parser = argparse.ArgumentParser(description="Parallel aggregation into xarray datasets per stand.")
     parser.add_argument('--base_dir', required=True, help='Base directory with processed stand imagery')
-    parser.add_argument('--source', required=True, help='Imagery source folder name (e.g., MODIS, PACE)')
-    parser.add_argument('--bands', required=True, nargs='+', type=int, help='Band numbers to extract (e.g., 1 2 3)')
+    parser.add_argument('--output_dir', required=True, help='Directory to save aggregated xarray datasets')
+    parser.add_argument('--num_workers', type=int, default=cpu_count()-1, help='Number of parallel processes')
 
     args = parser.parse_args()
 
-    build_time_series(
+    build_stand_xarray_parallel(
         base_dir=args.base_dir,
-        source=args.source,
-        bands=args.bands
+        output_dir=args.output_dir,
+        num_workers=args.num_workers
     )
-
