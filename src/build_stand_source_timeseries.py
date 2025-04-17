@@ -54,7 +54,6 @@ def process_single_stand(args):
     dataset.set_coords(['date', 'source'])
 
     dataset.attrs['stand_id'] = stand_id
-    print(dataset)
 
     output_path = os.path.join(output_dir, f'{stand_id}_timeseries.nc')
     try:

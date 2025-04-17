@@ -6,6 +6,7 @@ import xarray as xr
 import rioxarray as rxr
 from multiprocessing import Pool, cpu_count
 import subprocess
+import gc
 
 def get_subdataset_names(img_file):
     result = subprocess.run(['gdalinfo', img_file], capture_output=True, text=True)
@@ -22,6 +23,15 @@ def process_single_image(args_tuple):
     filename = os.path.basename(img_file)
     date_str, ext = os.path.splitext(filename)
     img_file_abs = os.path.abspath(img_file).replace("\\", "/")
+
+    for idx, stand in stands.iterrows():
+        stand_id = stand[stand_id_field]
+        stand_source_dir = os.path.join(output_folder, f'stand_{stand_id}', source)
+        os.makedirs(stand_source_dir, exist_ok=True)
+        output_path = os.path.join(stand_source_dir, f'{date_str}.tif')
+
+        if os.path.isfile(output_path):
+            return
 
     # Try to determine format by extension
     is_hdf = ext.lower() in ['.hdf', '.h5']
@@ -153,7 +163,7 @@ if __name__ == "__main__":
     parser.add_argument('--stand_id_field', default='stand_id', help='Stand ID field name')
     parser.add_argument('--target_crs', default='EPSG:4326', help='CRS for data')
     parser.add_argument('--raster_vars', required=True, nargs='+', help='Raster variable names (bands)')
-    parser.add_argument('--num_workers', type=int, default=cpu_count()-1, help='Number of parallel workers')
+    parser.add_argument('--num_workers', type=int, default=cpu_count()-2, help='Number of parallel workers')
 
     args = parser.parse_args()
 

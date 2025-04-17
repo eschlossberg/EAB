@@ -2,12 +2,16 @@ import xarray as xr
 import matplotlib.pyplot as plt
 import pandas as pd
 import matplotlib.dates as mdates
+import argparse
 
 # Load dataset
-stand_id = input('Stand ID: ')
-base_dir = r'D:\\EAB\\timeseries\\'
-image_id = f'stand_{stand_id}_timeseries.nc'
-filepath = base_dir + image_id
+# TODO: better description
+parser = argparse.ArgumentParser(description="For making figure 1 figs")
+parser.add_argument('--filepath', required=True, help='Path to the .nc file to be visualized')
+args = parser.parse_args()
+
+filepath = args.filepath
+
 ds = xr.open_dataset(filepath)
 
 # Average over spatial dimensions
@@ -35,7 +39,7 @@ tick_pos = tick_locs.dayofyear
 tick_labels = tick_locs.strftime("%b")
 
 plt.xticks(ticks=tick_pos, labels=tick_labels)
-plt.title(f"Stand {stand_id} Daily Reflectance Over Time (Average over pixels)")
+plt.title(f"Daily Reflectance Over Time (Average over pixels)")
 plt.xlabel("Month")
 plt.ylabel("Mean Reflectance")
 plt.grid(True)
