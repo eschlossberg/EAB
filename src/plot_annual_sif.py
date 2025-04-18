@@ -1,48 +1,92 @@
+import os
+import glob
+import math
 import xarray as xr
-import matplotlib.pyplot as plt
 import pandas as pd
-import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
 import argparse
 
-# Load dataset
-# TODO: better description
-parser = argparse.ArgumentParser(description="For making figure 1 figs")
-parser.add_argument('--filepath', required=True, help='Path to the .nc file to be visualized')
+# -----------------------------------------------------------------------------
+# Parse arguments
+# -----------------------------------------------------------------------------
+parser = argparse.ArgumentParser(
+    description="Tile reflectance time‐series plots for all .nc files in a directory"
+)
+parser.add_argument(
+    '--input_dir', 
+    required=True, 
+    help='Directory containing .nc files to visualize'
+)
+parser.add_argument(
+    '--ncols', 
+    type=int, 
+    default=None,
+    help='Number of subplot columns (defaults to ceil(sqrt(N)))'
+)
 args = parser.parse_args()
+input_dir = args.input_dir
 
-filepath = args.filepath
+# -----------------------------------------------------------------------------
+# Discover files and compute grid layout
+# -----------------------------------------------------------------------------
+files = sorted(glob.glob(os.path.join(input_dir, '*.nc')))
+if not files:
+    raise FileNotFoundError(f"No .nc files found in {input_dir!r}")
 
-ds = xr.open_dataset(filepath)
+n_files = len(files)
+ncols = args.ncols or math.ceil(math.sqrt(n_files))
+nrows = math.ceil(n_files / ncols)
 
-# Average over spatial dimensions
-avg_reflectance = ds['Reflectance'].mean(dim=['y', 'x', 'source'])
-
-# Convert to DataFrame
-df = pd.DataFrame({
-    "date": pd.to_datetime(avg_reflectance.date.values),
-    "reflectance": avg_reflectance.values
-})
-df["year"] = df["date"].dt.year
-df["day_of_year"] = df["date"].dt.dayofyear
-
-# Plot
-plt.figure(figsize=(12, 6))
-
-# One line per year
-for year, group in df.groupby("year"):
-    plt.plot(group["date"].dt.dayofyear, group["reflectance"], label=str(year))
-
-# Format x-axis as months
-# Create dummy dates from a non-leap year for label placement
-tick_locs = pd.date_range("2001-01-01", "2001-12-31", freq="MS")
-tick_pos = tick_locs.dayofyear
+# -----------------------------------------------------------------------------
+# Prepare month ticks
+# -----------------------------------------------------------------------------
+tick_locs   = pd.date_range("2001-01-01", "2001-12-31", freq="MS")
+tick_pos    = tick_locs.dayofyear
 tick_labels = tick_locs.strftime("%b")
 
-plt.xticks(ticks=tick_pos, labels=tick_labels)
-plt.title(f"Daily Reflectance Over Time (Average over pixels)")
-plt.xlabel("Month")
-plt.ylabel("Mean Reflectance")
-plt.grid(True)
-plt.legend(title="Year", bbox_to_anchor=(1.05, 1), loc="upper left")
-plt.tight_layout()
+# -----------------------------------------------------------------------------
+# Create figure and axes grid
+# -----------------------------------------------------------------------------
+fig, axes = plt.subplots(
+    nrows, ncols,
+    figsize=(4 * ncols, 3 * nrows),
+    squeeze=False
+)
+axes_flat = axes.flatten()
+
+# -----------------------------------------------------------------------------
+# Loop over each file & axis
+# -----------------------------------------------------------------------------
+for ax, fp in zip(axes_flat, files):
+    # Extract stand title from filename
+    fname = os.path.basename(fp)  # e.g. "stand_FOO_timeseries.nc"
+    stand_title = fname.removeprefix("stand_").removesuffix("_timeseries.nc")
+    
+    ds = xr.open_dataset(fp)
+    avg_ref = ds['Reflectance'].mean(dim=['y','x','source'])
+    
+    df = pd.DataFrame({
+        "date": pd.to_datetime(avg_ref.date.values),
+        "reflectance": avg_ref.values
+    })
+    df["year"] = df["date"].dt.year
+    
+    for year, grp in df.groupby("year"):
+        ax.plot(grp["date"].dt.dayofyear, grp["reflectance"], label=str(year))
+    
+    ax.set_xticks(tick_pos)
+    ax.set_xticklabels(tick_labels, rotation=45)
+    ax.set_title(stand_title, fontsize=10)
+    ax.set_xlabel("Month")
+    ax.set_ylabel("Mean Reflectance")
+    ax.grid(True)
+    ax.legend(fontsize='small', title='Year', loc='upper right')
+
+# -----------------------------------------------------------------------------
+# Turn off any unused axes
+# -----------------------------------------------------------------------------
+for ax in axes_flat[n_files:]:
+    ax.set_visible(False)
+
+fig.tight_layout()
 plt.show()
