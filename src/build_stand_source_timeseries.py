@@ -7,15 +7,14 @@ import argparse
 from multiprocessing import Pool, cpu_count
 
 def process_single_stand(args):
-    stand, output_dir = args
+    stand, output_dir, sources = args
     stand_id = os.path.basename(stand)
-    sources = os.listdir(stand)
+    if not sources:
+        sources = os.listdir(stand)
 
     dataarrays = []
 
     for source in sources:
-        if source == "MODIS_MCD43A4":
-            continue
         source_dir = os.path.join(stand, source)
         tifs = sorted(glob.glob(os.path.join(source_dir, '*.tif')))
 
@@ -25,8 +24,12 @@ def process_single_stand(args):
         for tif in tifs:
             basename = os.path.basename(tif).replace('.tif', '')
             try:
-                source_name, date_part = basename.split('_')
-                date_str = pd.to_datetime(date_part, format='%Y%m%d')
+                if source != 'MODIS_MCD43A4':
+                    source_name, date_part = basename.split('_')
+                    date_str = pd.to_datetime(date_part, format='%Y%m%d')
+                else:
+                    _, date_part, _, _, _ = basename.split('.')
+                    date_str = pd.to_datetime(date_part, format='A%Y%j')
             except Exception as e:
                 print(f"[{stand_id}] Filename format error ({basename}): {e}")
                 continue
@@ -62,11 +65,11 @@ def process_single_stand(args):
     except Exception as e:
         print(f"[{stand_id}] Error saving dataset: {e}")
 
-def build_stand_xarray_parallel(base_dir, output_dir, num_workers):
-    stands = glob.glob(os.path.join(base_dir, 'stand_*'))
+def build_stand_xarray_parallel(base_dir, output_dir, num_workers, sources):
+    stands = glob.glob(os.path.join(base_dir, '*'))
     os.makedirs(output_dir, exist_ok=True)
 
-    args_list = [(stand, output_dir) for stand in stands]
+    args_list = [(stand, output_dir, sources) for stand in stands]
 
     with Pool(processes=num_workers) as pool:
         pool.map(process_single_stand, args_list)
@@ -76,11 +79,13 @@ if __name__ == "__main__":
     parser.add_argument('--base_dir', required=True, help='Base directory with processed stand imagery')
     parser.add_argument('--output_dir', required=True, help='Directory to save aggregated xarray datasets')
     parser.add_argument('--num_workers', type=int, default=cpu_count()-1, help='Number of parallel processes')
+    parser.add_argument('--sources', required=False, default=None, nargs='+', help='Name of sources to process')
 
     args = parser.parse_args()
 
     build_stand_xarray_parallel(
         base_dir=args.base_dir,
         output_dir=args.output_dir,
-        num_workers=args.num_workers
+        num_workers=args.num_workers,
+        sources=args.sources
     )
