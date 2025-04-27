@@ -23,6 +23,7 @@ def read_hdf(img_file, raster_vars=None):
     Read subdatasets from an HDF file into a stacked xarray.DataArray.
     If raster_vars is provided, only subdatasets whose description or URI contain any of those names are included.
     """
+    raster_vars=None
     subs = list_subdatasets(img_file)
     if raster_vars:
         subs = [(uri, desc) for uri, desc in subs

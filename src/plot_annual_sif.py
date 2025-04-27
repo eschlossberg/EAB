@@ -23,6 +23,19 @@ parser.add_argument(
     default=None,
     help='Number of subplot columns (defaults to ceil(sqrt(N)))'
 )
+parser.add_argument(
+    '--y_axis',
+    type=str,
+    required=True,
+    help='Label on y-axis'
+)
+parser.add_argument(
+    '--x_axis',
+    type=str,
+    required=True,
+    help='Label on x-axis'
+)
+
 args = parser.parse_args()
 input_dir = args.input_dir
 
@@ -77,8 +90,8 @@ for ax, fp in zip(axes_flat, files):
     ax.set_xticks(tick_pos)
     ax.set_xticklabels(tick_labels, rotation=45)
     ax.set_title(stand_title, fontsize=10)
-    ax.set_xlabel("Month")
-    ax.set_ylabel("Mean Reflectance")
+    ax.set_xlabel(args.x_axis)
+    ax.set_ylabel(args.y_axis)
     ax.grid(True)
     ax.legend(fontsize='small', title='Year', loc='upper right')
 
