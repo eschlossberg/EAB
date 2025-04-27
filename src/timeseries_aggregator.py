@@ -66,7 +66,9 @@ def compute_yearly_stats(ds, var, stat, months):
         stat_ts = grp.median(dim='date')
     elif stat.endswith('th'):
         p = int(stat[:-2])
-        stat_ts = grp.reduce(lambda x: np.nanpercentile(x, p, axis=0), dim='date')
+        # p = 90
+        stat_ts = da.groupby('date.year') \
+            .quantile(p / 100, dim='date', skipna=True)
     else:
         raise ValueError(f"Unsupported statistic: {stat}")
     std_ts = grp.std(dim='date')
