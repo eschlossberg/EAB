@@ -113,6 +113,9 @@ def main():
         '--out', '-o', default='timeseries_comparison.png',
         help='Output filename for the plot (ignored if --show is set)'
     )
+    p.add_argument(
+        '--y_axis', help='Label for the y-axis'
+    )
     args = p.parse_args()
 
     months = parse_months(args.months)
@@ -186,16 +189,17 @@ def main():
             shades.append(None)
 
     ax.set_xlabel('Year')
+    y_axis = args.y_axis if args.y_axis else args.variable
     if args.normalize:
-        ax.set_ylabel(f'Difference of {args.stat.capitalize()} {args.variable} from Forest Average')
+        ax.set_ylabel(f'Difference of {args.stat.capitalize()} {y_axis} from Forest Average')
         ax.set_title(
-            f'Difference of {args.stat.capitalize()} {args.variable} '
+            f'Difference of {args.stat.capitalize()} {y_axis} '
             f'for months {months[0]}–{months[-1]}'
         )
     else:
-        ax.set_ylabel(f'{args.stat.capitalize()} of {args.variable}')
+        ax.set_ylabel(f'{args.stat.capitalize()} of {y_axis}')
         ax.set_title(
-            f'{args.stat.capitalize()} of {args.variable} '
+            f'{args.stat.capitalize()} of {y_axis} '
             f'for months {months[0]}–{months[-1]}'
         )
 
